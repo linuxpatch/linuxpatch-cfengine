@@ -1,0 +1,67 @@
+body common control {
+      bundlesequence => { "main" };
+      inputs => { "cfengine_stdlib.cf" };
+}
+
+bundle agent main {
+  vars:
+      "install_script" string => "/tmp/install.sh";
+      "install_path" string => "/opt/linuxpatch/bin/linuxpatch";
+      "lp_key" string => "your_lp_key_here";
+
+  files:
+      # Download the install.sh script if linuxpatch is not installed
+      "/tmp/install.sh"
+        create => "true",
+        edit_template => "linuxpatch/install_template.sh",
+        perms => mog( "0755", "root", "root" ),
+        classes => if_repaired("downloaded_install_script"),
+        comment => "Download the install.sh script if not already installed";
+
+      # Clean up the install.sh script
+      "/tmp/install.sh"
+        delete => tidy,
+        classes => if_repaired("cleanup_install_script"),
+        comment => "Clean up the install.sh script after execution";
+
+  commands:
+      # Run the install.sh script with LP_KEY as an environment variable
+      "LP_KEY=$(cat /tmp/lp_key) /tmp/install.sh"
+        ifvarclass => "downloaded_install_script",
+        classes => if_repaired("ran_install_script"),
+        comment => "Run the install.sh script with LP_KEY";
+
+      # Ensure the linuxpatch-agent service is running and enabled at startup
+      "/bin/systemctl enable linuxpatch-agent"
+        ifvarclass => "ran_install_script",
+        classes => if_repaired("enabled_linuxpatch_service"),
+        comment => "Enable the linuxpatch-agent service";
+
+      "/bin/systemctl start linuxpatch-agent"
+        ifvarclass => "ran_install_script",
+        comment => "Start the linuxpatch-agent service";
+
+  files:
+      "/tmp/lp_key"
+        create => "true",
+        edit_line => append_line("$(lp_key)"),
+        perms => mog("0600", "root", "root"),
+        classes => if_repaired("lp_key_file_created"),
+        comment => "Create temporary file to store LP_KEY";
+}
+
+bundle edit_template linuxpatch/install_template.sh
+{
+  vars:
+    "install_content" string => '
+#!/bin/bash
+curl -L https://linuxpatch.com/install.sh -o /tmp/install.sh
+chmod +x /tmp/install.sh
+';
+
+  files:
+    "/tmp/install_template.sh"
+      comment => "Template for install.sh",
+      create => "true",
+      edit_line => append_line("$(install_content)");
+}
